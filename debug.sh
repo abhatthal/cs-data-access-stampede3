@@ -3,23 +3,23 @@
 #
 # Run this script directly from the login node:  ./debug.sh
 # Do NOT submit it with sbatch - an interactive session cannot run as a batch
-# job. Instead, the script requests a Slurm allocation (salloc) and drops you
-# into the container shell on a compute node via srun --pty.
+# job. Stampede3 also rejects plain `salloc` for interactive development; the
+# supported way is the `idev` command, which requests the allocation and drops
+# you into a shell on a compute node.
 #
-# `singularity shell` is the Singularity equivalent of `docker run -it`: it
-# gives an interactive session where you can navigate inside the container.
-# Type `exit` to leave the container, then `exit` again to end the allocation.
+# `apptainer shell` is the Apptainer equivalent of `docker run -it`: it gives
+# an interactive session where you can navigate inside the container.
+# Type `exit` to leave the container, then `exit` again to end the idev session.
 
 IMAGE="cs_data_tutorial.sif"    # Pulled by get_img.sh (sceccode/cs_data_tutorial)
 
-salloc \
-    --account=TG-EES230082 \
-    --partition=skx-dev \
-    --nodes=1 \
-    --ntasks=1 \
-    --time=00:30:00 \
-    srun --pty bash -lc "
-      module load tacc-apptainer
-      echo \"Interactive container session. Exit twice to leave (container, then allocation).\"
-      apptainer shell '$IMAGE'
-    "
+echo "Requesting interactive session. Once you land on the compute node, run:"
+echo "  module load tacc-apptainer"
+echo "  apptainer shell $IMAGE"
+
+idev \
+    -A TG-EES230082 \
+    -p skx-dev \
+    -N 1 \
+    -n 1 \
+    -t 00:30:00

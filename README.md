@@ -17,9 +17,11 @@ Run `sbatch get_img.sh` once manually, Quakeworx jobs invoke `run.sh`.
                                                                                 
 - `debug.sh` :   Opens an interactive shell inside the container. Run it
                  directly from the login node (`./debug.sh`, do not `sbatch`) —
-                 it requests a Slurm allocation via `salloc` and drops you into
-                 `apptainer shell cs_data_tutorial.sif` on a compute node.
-                 Exit twice to leave (container, then allocation).                
+                 Stampede3 requires `idev` for interactive sessions (`salloc`
+                 is rejected), so it starts an `idev` session; then run
+                 `module load tacc-apptainer` and
+                 `apptainer shell cs_data_tutorial.sif` on the compute node.
+                 Exit twice to leave (container, then idev session).                
                                                                                 
 The final outputs are written into a temporary scratch directory which will     
 eventually be purged. 
