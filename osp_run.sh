@@ -159,7 +159,11 @@ if [ -n "$HOST_SCP" ] && [ -n "$HOST_SSH" ]; then
     done
     cat > "$TEMP_DIR/bin/scp" <<WRAPPER
 #!/bin/bash
-exec $HOST_SCP -o BatchMode=yes -o StrictHostKeyChecking=accept-new "\$@"
+# -F /dev/null: skip the system ssh config entirely - the bind of the host's
+# /etc/ssh trips ssh's "Bad owner or permissions" check on included files
+# (uid/mode as seen inside the container), and TACC's internal ssh works
+# without that config.
+exec $HOST_SCP -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=accept-new "\$@"
 WRAPPER
     chmod +x "$TEMP_DIR/bin/scp"
 fi
