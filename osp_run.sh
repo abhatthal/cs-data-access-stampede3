@@ -142,6 +142,16 @@ HOST_SSH=$(command -v ssh || true)
 if [ -n "$HOST_SCP" ] && [ -n "$HOST_SSH" ]; then
     mkdir -p "$TEMP_DIR/bin"
     HOST_BINDS="$HOST_BINDS --bind /etc/ssh:/etc/ssh --bind $HOST_SCP:/usr/bin/scp --bind $HOST_SSH:/usr/bin/ssh"
+    # The host client binaries may need libraries the minimal container image
+    # lacks (observed: libcrypt.so.2). Find every library scp/ssh link
+    # against, check which ones are missing inside the container, and bind
+    # each one in at its native path so the loader finds it.
+    LIBS=$(ldd "$HOST_SCP" "$HOST_SSH" 2>/dev/null | awk '$3 ~ /^\// {print $3}' | sort -u)
+    MISSING=$(apptainer exec "$IMAGE" bash -c 'for f in "$@"; do [ -e "$f" ] || echo "$f"; done' _ $LIBS) || true
+    for src in $MISSING; do
+        echo "Binding missing library into container: $src"
+        HOST_BINDS="$HOST_BINDS --bind $src:$src"
+    done
     cat > "$TEMP_DIR/bin/scp" <<WRAPPER
 #!/bin/bash
 exec $HOST_SCP -o BatchMode=yes -o StrictHostKeyChecking=accept-new "\$@"
