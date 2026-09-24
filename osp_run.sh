@@ -191,12 +191,20 @@ INPUT_GEN_ARGS=$(printf '%q ' "${FORWARDED[@]:-}")
 # The temp bind's bin/ directory (scp wrapper above) is prepended to PATH
 # inside the container; \$PATH stays escaped so it resolves in the container.
 if ! apptainer exec $HOST_BINDS "$IMAGE" bash -c "set -o pipefail; export PATH=$CONTAINER_HOME/tmp/bin:\$PATH; cd $CONTAINER_HOME/tmp && python3 $CONTAINER_HOME/cs-data-tools/src/input_gen/run_input_gen.py $INPUT_GEN_ARGS | python3 $CONTAINER_HOME/cs-data-tools/src/retrieve_cs_data.py -i - -o $CONTAINER_HOME/outputs -t $CONTAINER_HOME/tmp -c $CONTAINER_HOME/cs-data-tools/src/db_wrapper/tacc.cfg"; then
-    # A failed seismogram transfer leaves the scp diagnostics in
+    # Diagnose: a failed scp transfer leaves the scp diagnostics in
     # file_transfer.log in the temp bind, but $TEMP_DIR is node-local and
-    # purged at job end; copy it into the persistent outputs dir first.
+    # purged at job end. Echo everything into the job log first, then copy
+    # the transfer log into the persistent outputs dir.
+    echo "--- pipeline failure diagnostics ---"
+    echo "TEMP_DIR=$TEMP_DIR"
+    ls -la "$TEMP_DIR" || true
     if [ -f "$TEMP_DIR/file_transfer.log" ]; then
+        echo "--- file_transfer.log contents ---"
+        cat "$TEMP_DIR/file_transfer.log"
         cp "$TEMP_DIR/file_transfer.log" "$OUTPUT_DIR/seismogram_transfer_failure.log"
-        echo "scp transfer log copied to $OUTPUT_DIR/seismogram_transfer_failure.log"
+        echo "--- copied to $OUTPUT_DIR/seismogram_transfer_failure.log ---"
+    else
+        echo "NOTE: no file_transfer.log; the pipeline failed before the scp stage."
     fi
     exit 1
 fi
