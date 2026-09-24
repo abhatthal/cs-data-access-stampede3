@@ -129,6 +129,26 @@ mkdir -p "$OUTPUT_DIR" "$TEMP_DIR"
 # the host directory name.
 HOST_BINDS="--bind $PWD/$OUTPUT_DIR:$CONTAINER_HOME/outputs --bind $TEMP_DIR:$CONTAINER_HOME/tmp"
 
+# --- scp client for seismogram transfer --------------------------------------
+# The container image ships no OpenSSH client, but the TACC config
+# (file_method = scp in tacc.cfg) transfers seismograms with scp from login2.
+# Bind the host client binaries into the container, plus /etc/ssh so ssh
+# behaves as it does on the host (host-based auth config included), and drop
+# an scp wrapper in the temp bind that disables interactive prompts: scp's
+# output is captured to a log file by the data collector, so a host-key or
+# password prompt would hang the job instead of failing fast.
+HOST_SCP=$(command -v scp || true)
+HOST_SSH=$(command -v ssh || true)
+if [ -n "$HOST_SCP" ] && [ -n "$HOST_SSH" ]; then
+    mkdir -p "$TEMP_DIR/bin"
+    HOST_BINDS="$HOST_BINDS --bind /etc/ssh:/etc/ssh --bind $HOST_SCP:/usr/bin/scp --bind $HOST_SSH:/usr/bin/ssh"
+    cat > "$TEMP_DIR/bin/scp" <<WRAPPER
+#!/bin/bash
+exec $HOST_SCP -o BatchMode=yes -o StrictHostKeyChecking=accept-new "\$@"
+WRAPPER
+    chmod +x "$TEMP_DIR/bin/scp"
+fi
+
 # The event file (-e) lives in the job directory, but the pipeline runs from
 # the container home, so a relative -e path would not resolve. Bind the file
 # into the container home and rewrite the -e argument to its container path.
@@ -168,6 +188,8 @@ INPUT_GEN_ARGS=$(printf '%q ' "${FORWARDED[@]:-}")
 # which would fail with EROFS. Scripts and config are referenced by absolute
 # path so the cwd change doesn't break imports or the -c lookup. All other
 # stages take absolute -o/-t paths, so nothing else depends on the cwd.
-apptainer exec $HOST_BINDS "$IMAGE" bash -c "set -o pipefail; cd $CONTAINER_HOME/tmp && python3 $CONTAINER_HOME/cs-data-tools/src/input_gen/run_input_gen.py $INPUT_GEN_ARGS | python3 $CONTAINER_HOME/cs-data-tools/src/retrieve_cs_data.py -i - -o $CONTAINER_HOME/outputs -t $CONTAINER_HOME/tmp -c $CONTAINER_HOME/cs-data-tools/src/db_wrapper/tacc.cfg"
+# The temp bind's bin/ directory (scp wrapper above) is prepended to PATH
+# inside the container; \$PATH stays escaped so it resolves in the container.
+apptainer exec $HOST_BINDS "$IMAGE" bash -c "set -o pipefail; export PATH=$CONTAINER_HOME/tmp/bin:\$PATH; cd $CONTAINER_HOME/tmp && python3 $CONTAINER_HOME/cs-data-tools/src/input_gen/run_input_gen.py $INPUT_GEN_ARGS | python3 $CONTAINER_HOME/cs-data-tools/src/retrieve_cs_data.py -i - -o $CONTAINER_HOME/outputs -t $CONTAINER_HOME/tmp -c $CONTAINER_HOME/cs-data-tools/src/db_wrapper/tacc.cfg"
 
 echo "Done. Results are in $OUTPUT_DIR"
