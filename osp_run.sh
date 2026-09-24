@@ -161,6 +161,13 @@ INPUT_GEN_ARGS=$(printf '%q ' "${FORWARDED[@]:-}")
 # 'set -euo pipefail' does not propagate into it); input_gen writes the request
 # JSON to stdout (summary to stderr) and retrieve_cs_data reads it from stdin
 # via '-i -', per the cs-data-tools docs.
-apptainer exec $HOST_BINDS "$IMAGE" bash -c "set -o pipefail; cd $CONTAINER_HOME && python3 cs-data-tools/src/input_gen/run_input_gen.py $INPUT_GEN_ARGS | python3 cs-data-tools/src/retrieve_cs_data.py -i - -o $CONTAINER_HOME/outputs -t $CONTAINER_HOME/tmp -c cs-data-tools/src/db_wrapper/tacc.cfg"
+#
+# The pipeline runs from the temp bind, not the container home: the image FS is
+# read-only under singularity, and the scp-based seismogram download writes its
+# file_transfer.log relative to the cwd (src/data_collector/run_data_collector.py),
+# which would fail with EROFS. Scripts and config are referenced by absolute
+# path so the cwd change doesn't break imports or the -c lookup. All other
+# stages take absolute -o/-t paths, so nothing else depends on the cwd.
+apptainer exec $HOST_BINDS "$IMAGE" bash -c "set -o pipefail; cd $CONTAINER_HOME/tmp && python3 $CONTAINER_HOME/cs-data-tools/src/input_gen/run_input_gen.py $INPUT_GEN_ARGS | python3 $CONTAINER_HOME/cs-data-tools/src/retrieve_cs_data.py -i - -o $CONTAINER_HOME/outputs -t $CONTAINER_HOME/tmp -c $CONTAINER_HOME/cs-data-tools/src/db_wrapper/tacc.cfg"
 
 echo "Done. Results are in $OUTPUT_DIR"
