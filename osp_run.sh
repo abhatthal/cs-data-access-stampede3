@@ -143,14 +143,19 @@ if [ -n "$HOST_SCP" ] && [ -n "$HOST_SSH" ]; then
     mkdir -p "$TEMP_DIR/bin"
     HOST_BINDS="$HOST_BINDS --bind /etc/ssh:/etc/ssh --bind $HOST_SCP:/usr/bin/scp --bind $HOST_SSH:/usr/bin/ssh"
     # The host client binaries may need libraries the minimal container image
-    # lacks (observed: libcrypt.so.2). Find every library scp/ssh link
-    # against, check which ones are missing inside the container, and bind
-    # each one in at its native path so the loader finds it.
+    # lacks (observed: libcrypt.so.2). The image's library layout may differ
+    # from the host's (Debian-style images use /lib/x86_64-linux-gnu, EL-style
+    # /lib64), so first find the directory the container's own loader uses
+    # (the one holding libc), then check each library scp/ssh link against by
+    # basename and bind the missing ones into that directory. Checking by
+    # basename keeps glibc core libs (which the container has) unshadowed.
+    LIBDIR=$(apptainer exec "$IMAGE" bash -c 'for d in /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu /lib64 /usr/lib64; do if [ -e "$d/libc.so.6" ]; then echo "$d"; exit; fi; done')
     LIBS=$(ldd "$HOST_SCP" "$HOST_SSH" 2>/dev/null | awk '$3 ~ /^\// {print $3}' | sort -u)
-    MISSING=$(apptainer exec "$IMAGE" bash -c 'for f in "$@"; do [ -e "$f" ] || echo "$f"; done' _ $LIBS) || true
-    for src in $MISSING; do
-        echo "Binding missing library into container: $src"
-        HOST_BINDS="$HOST_BINDS --bind $src:$src"
+    MISSING=$(apptainer exec "$IMAGE" bash -c 'libdir=$1; shift; for f in "$@"; do [ -e "$libdir/$(basename "$f")" ] || basename "$f"; done' _ "$LIBDIR" $LIBS | sort -u) || true
+    for name in $MISSING; do
+        src=$(echo "$LIBS" | grep "/$name\$")
+        echo "Binding missing library into container: $src -> $LIBDIR/$name"
+        HOST_BINDS="$HOST_BINDS --bind $src:$LIBDIR/$name"
     done
     cat > "$TEMP_DIR/bin/scp" <<WRAPPER
 #!/bin/bash
