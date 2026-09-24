@@ -137,16 +137,6 @@ HOST_BINDS="--bind $PWD/$OUTPUT_DIR:$CONTAINER_HOME/outputs --bind $TEMP_DIR:$CO
 # scp wrapper in the temp bind that bounds how long a transfer can run: scp's
 # output is captured to a log file by the data collector, so a stuck auth
 # step or a network hang would otherwise hang the job instead of failing fast.
-#
-# Auth mechanism confirmed via manual debug session (see README.md): TACC's
-# login<->compute SSH uses the invoking user's own key under ~/.ssh, then a
-# keyboard-interactive round trip TACC auto-satisfies with no prompt - not
-# host-based auth, so no /etc/ssh bind is needed, just the user's real ~/.ssh
-# (ssh_home_binds) and pointing the wrapper's $HOME at it. Confirmed NOT to
-# work: `-o BatchMode=yes` - it disables the keyboard-interactive method
-# outright ("No more authentication methods to try" after the publickey step
-# succeeds), so `timeout` below does BatchMode's fail-fast job instead,
-# without touching which auth methods ssh is allowed to attempt.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib_ssh_binds.sh"
 SSH_BINDS=$(ssh_binds "$IMAGE")

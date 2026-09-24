@@ -6,12 +6,6 @@
 # compute node - both build the container's SSH environment identically, so
 # manual testing via debug.sh is representative of what a batch job runs.
 #
-# Confirmed via manual debug session (see README.md's SSH/SCP diagnostic
-# recipe): TACC's login<->compute passwordless SSH is NOT host-based auth -
-# it's the invoking user's own key under ~/.ssh plus a keyboard-interactive
-# step TACC auto-satisfies with no prompt. So the container needs the user's
-# real ~/.ssh (ssh_home_binds), not /etc/ssh.
-#
 # Usage: source lib_ssh_binds.sh
 #        SSH_BINDS=$(ssh_binds "$IMAGE")       # host scp/ssh binaries + libs
 #        SSH_HOME_BINDS=$(ssh_home_binds)      # host ~/.ssh (identity, known_hosts)
