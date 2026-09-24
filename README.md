@@ -43,43 +43,44 @@ eventually be purged.
 `scp` binaries. The production wrapper around `scp` sets `HOME` to the real
 invoking user's home (so ssh's default identity/known_hosts lookup finds the
 bound-in `~/.ssh`), then passes `-F /dev/null` (no ssh_config ships in the
-container anyway), `-o BatchMode=yes` (fail fast instead of prompting),
-`-o StrictHostKeyChecking=yes` (the bound-in known_hosts already trusts
-login2), and `-o ConnectTimeout=15`.
+container anyway), `-o StrictHostKeyChecking=yes` (the bound-in known_hosts
+already trusts login2), `-o ConnectTimeout=15` (bounds the initial network
+connection), and runs the whole thing under `timeout 60` (bounds the entire
+auth + transfer, adjust based on observed seismogram file sizes/transfer
+speed once real data is flowing).
 
-**Confirmed** (manual debug session, bare compute node, `qwxdev`): TACC's
+**Confirmed** (manual debug session, `qwxdev`, bare compute node): TACC's
 login←compute SSH is **not** host-based auth. `ssh -v` shows the server only
 ever offers `publickey,keyboard-interactive`; the client's own
 `~/.ssh/id_ed25519` is accepted for the publickey step ("partial success"),
 then a `keyboard-interactive` round trip completes with **no prompt shown and
-no input typed** - TACC auto-satisfies it from the compute node. Both a plain
-`ssh` command and an `scp` of an arbitrary file succeeded this way.
+no input typed** - TACC auto-satisfies it from a compute node. Both `ssh` and
+`scp` of an arbitrary file succeeded this way.
 
-The one open question this doesn't yet answer: whether `-o BatchMode=yes`
-(which disables interactive querying) also blocks that zero-prompt
-`keyboard-interactive` completion, since the production wrapper relies on
-`BatchMode=yes` to fail fast rather than hang. Test that specifically, on the
-bare compute node (no container needed for this one), via `debug.sh` → `idev`:
+**Also confirmed - and this is why the wrapper no longer uses it**: inside
+the container (`lib_ssh_binds.sh`'s binds, `$HOME` pinned to the real value),
+`-o BatchMode=yes` breaks this. With it set, the exact same key is still
+accepted for the publickey step, but the server then reports "No more
+authentication methods to try" and denies the connection
+(`Permission denied (keyboard-interactive)`) - `BatchMode=yes` disables the
+`keyboard-interactive` method outright, and that's the method TACC's
+zero-prompt second factor rides on. `timeout 60` around the whole `scp`
+invocation replaces `BatchMode`'s fail-fast role without touching which auth
+methods ssh is allowed to attempt.
+
+Not yet directly tested: the same command *inside* the container *without*
+`BatchMode=yes` (i.e. exactly what the production wrapper now runs) - worth
+one more quick check to close the loop:
 
 ```bash
-# Already confirmed to work without BatchMode:
-ssh -v login2.stampede3.tacc.utexas.edu 'echo ok'
-
-# The open question: does BatchMode=yes still let the keyboard-interactive
-# step complete, or does it block the method outright?
-ssh -v -o BatchMode=yes login2.stampede3.tacc.utexas.edu 'echo ok'
-scp -v -o BatchMode=yes /tmp/probe.txt login2.stampede3.tacc.utexas.edu:/tmp/probe_${USER}.txt
+ssh -v login2.stampede3.tacc.utexas.edu 'echo ok'   # inside the container, no BatchMode
 ```
 
-- **Succeeds identically**: the wrapper's `BatchMode=yes` is fine as-is.
-- **Fails/hangs**: `BatchMode=yes` is blocking `keyboard-interactive` outright.
-  Drop it from the wrapper and rely on `-o ConnectTimeout=15` (bounds network
-  hangs) plus wrapping the `exec` in `timeout <N>` (bounds an auth hang too,
-  since there's no prompt to fail on but the process could still stall) to
-  keep the fail-fast behavior `BatchMode=yes` was providing.
-
-Once that's settled, repeat the same commands inside the container (binds
-from `debug.sh`'s printed instructions) to confirm the bound-in `~/.ssh` and
-pinned `$HOME` reproduce the same result there, then retry the full
-production wrapper (`$TEMP_DIR/bin/scp`, or just its `exec` line) directly
-against a real `/corral` path once the ACL grant is confirmed.
+Remaining verification once the `/corral` ACL grant is confirmed: run the
+production wrapper (`$TEMP_DIR/bin/scp`, or just its final `exec` line, e.g.
+`timeout 60 scp -F /dev/null -o StrictHostKeyChecking=yes -o ConnectTimeout=15
+login2.stampede3.tacc.utexas.edu:/corral/projects/DS-Cybershake/Study_22.12_LF/<a
+real file> /tmp/`) against a real `/corral` path from inside the container,
+then run `sbatch run.sh` end to end and confirm `./outputs` contains the
+expected `Seismogram_*.grm` files with no
+`seismogram_transfer_failure.log` written.

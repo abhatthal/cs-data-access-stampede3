@@ -134,15 +134,19 @@ HOST_BINDS="--bind $PWD/$OUTPUT_DIR:$CONTAINER_HOME/outputs --bind $TEMP_DIR:$CO
 # (file_method = scp in tacc.cfg) transfers seismograms with scp from login2.
 # Bind the host client binaries into the container (see lib_ssh_binds.sh,
 # shared with debug.sh so manual testing matches this exactly), and drop an
-# scp wrapper in the temp bind that disables interactive prompts: scp's
+# scp wrapper in the temp bind that bounds how long a transfer can run: scp's
 # output is captured to a log file by the data collector, so a stuck auth
 # step or a network hang would otherwise hang the job instead of failing fast.
 #
 # Auth mechanism confirmed via manual debug session (see README.md): TACC's
-# login<->compute SSH uses the invoking user's own key under ~/.ssh plus a
-# keyboard-interactive step TACC auto-satisfies with no prompt - not
+# login<->compute SSH uses the invoking user's own key under ~/.ssh, then a
+# keyboard-interactive round trip TACC auto-satisfies with no prompt - not
 # host-based auth, so no /etc/ssh bind is needed, just the user's real ~/.ssh
-# (ssh_home_binds) and pointing the wrapper's $HOME at it.
+# (ssh_home_binds) and pointing the wrapper's $HOME at it. Confirmed NOT to
+# work: `-o BatchMode=yes` - it disables the keyboard-interactive method
+# outright ("No more authentication methods to try" after the publickey step
+# succeeds), so `timeout` below does BatchMode's fail-fast job instead,
+# without touching which auth methods ssh is allowed to attempt.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib_ssh_binds.sh"
 SSH_BINDS=$(ssh_binds "$IMAGE")
@@ -162,11 +166,11 @@ if [ -n "$SSH_BINDS" ]; then
 # StrictHostKeyChecking=yes: the real known_hosts (bound in above) already
 # has a trusted entry for login2, so there's nothing to bootstrap - fail
 # closed instead of trust-on-first-use if that ever isn't true.
-# ConnectTimeout: BatchMode=yes fails fast on an auth prompt, but not on a
-# network-level hang (e.g. a remote mount issue); bound that too so a stuck
-# transfer fails within the job's time budget.
+# ConnectTimeout bounds the initial network connection; the outer `timeout`
+# bounds the whole transfer (auth + transfer), since BatchMode=yes can't be
+# used here (see comment above) to make a stuck auth step fail fast.
 export HOME=$HOME
-exec $HOST_SCP -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "\$@"
+exec timeout 60 $HOST_SCP -F /dev/null -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "\$@"
 WRAPPER
     chmod +x "$TEMP_DIR/bin/scp"
 fi
