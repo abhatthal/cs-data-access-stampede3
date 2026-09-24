@@ -132,38 +132,32 @@ HOST_BINDS="--bind $PWD/$OUTPUT_DIR:$CONTAINER_HOME/outputs --bind $TEMP_DIR:$CO
 # --- scp client for seismogram transfer --------------------------------------
 # The container image ships no OpenSSH client, but the TACC config
 # (file_method = scp in tacc.cfg) transfers seismograms with scp from login2.
-# Bind the host client binaries into the container, plus /etc/ssh so ssh
-# behaves as it does on the host (host-based auth config included), and drop
-# an scp wrapper in the temp bind that disables interactive prompts: scp's
+# Bind the host client binaries into the container (see lib_ssh_binds.sh,
+# shared with debug.sh so manual testing matches this exactly), and drop an
+# scp wrapper in the temp bind that disables interactive prompts: scp's
 # output is captured to a log file by the data collector, so a host-key or
 # password prompt would hang the job instead of failing fast.
-HOST_SCP=$(command -v scp || true)
-HOST_SSH=$(command -v ssh || true)
-if [ -n "$HOST_SCP" ] && [ -n "$HOST_SSH" ]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib_ssh_binds.sh"
+SSH_BINDS=$(ssh_binds "$IMAGE")
+if [ -n "$SSH_BINDS" ]; then
     mkdir -p "$TEMP_DIR/bin"
-    HOST_BINDS="$HOST_BINDS --bind /etc/ssh:/etc/ssh --bind $HOST_SCP:/usr/bin/scp --bind $HOST_SSH:/usr/bin/ssh"
-    # The host client binaries may need libraries the minimal container image
-    # lacks (observed: libcrypt.so.2). The image's library layout may differ
-    # from the host's (Debian-style images use /lib/x86_64-linux-gnu, EL-style
-    # /lib64), so first find the directory the container's own loader uses
-    # (the one holding libc), then check each library scp/ssh link against by
-    # basename and bind the missing ones into that directory. Checking by
-    # basename keeps glibc core libs (which the container has) unshadowed.
-    LIBDIR=$(apptainer exec "$IMAGE" bash -c 'for d in /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu /lib64 /usr/lib64; do if [ -e "$d/libc.so.6" ]; then echo "$d"; exit; fi; done')
-    LIBS=$(ldd "$HOST_SCP" "$HOST_SSH" 2>/dev/null | awk '$3 ~ /^\// {print $3}' | sort -u)
-    MISSING=$(apptainer exec "$IMAGE" bash -c 'libdir=$1; shift; for f in "$@"; do [ -e "$libdir/$(basename "$f")" ] || basename "$f"; done' _ "$LIBDIR" $LIBS | sort -u) || true
-    for name in $MISSING; do
-        src=$(echo "$LIBS" | grep "/$name\$")
-        echo "Binding missing library into container: $src -> $LIBDIR/$name"
-        HOST_BINDS="$HOST_BINDS --bind $src:$LIBDIR/$name"
-    done
+    HOST_BINDS="$HOST_BINDS $SSH_BINDS"
+    HOST_SCP=$(command -v scp)
     cat > "$TEMP_DIR/bin/scp" <<WRAPPER
 #!/bin/bash
 # -F /dev/null: skip the system ssh config entirely - the bind of the host's
 # /etc/ssh trips ssh's "Bad owner or permissions" check on included files
 # (uid/mode as seen inside the container), and TACC's internal ssh works
 # without that config.
-exec $HOST_SCP -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=accept-new "\$@"
+# UserKnownHostsFile: the default location resolves under \$HOME, which here
+# is the container's baked-in, read-only home - point StrictHostKeyChecking's
+# new-key bookkeeping at the writable temp bind instead.
+# ConnectTimeout: BatchMode=yes fails fast on an auth prompt, but not on a
+# network-level hang (e.g. a remote mount issue); bound that too so a stuck
+# transfer fails within the job's time budget.
+exec $HOST_SCP -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=accept-new \\
+    -o UserKnownHostsFile=$CONTAINER_HOME/tmp/known_hosts -o ConnectTimeout=15 "\$@"
 WRAPPER
     chmod +x "$TEMP_DIR/bin/scp"
 fi

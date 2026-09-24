@@ -13,9 +13,14 @@
 
 IMAGE="cs_data_tutorial.sif"    # Pulled by get_img.sh (sceccode/cs_data_tutorial)
 
+# The compute-node shell printed below sources lib_ssh_binds.sh (the same
+# helper osp_run.sh uses) so the interactive session gets the identical
+# host ssh/scp bind set a batch job would - see README.md for the SSH/SCP
+# diagnostic recipe to run once inside.
 echo "Requesting interactive session. Once you land on the compute node, run:"
 echo "  module load tacc-apptainer"
-echo "  apptainer shell $IMAGE"
+echo "  source lib_ssh_binds.sh && SSH_BINDS=\$(ssh_binds $IMAGE)"
+echo "  apptainer shell \$SSH_BINDS $IMAGE"
 
 idev \
     -A TG-EES230082 \
