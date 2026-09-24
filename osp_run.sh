@@ -135,29 +135,38 @@ HOST_BINDS="--bind $PWD/$OUTPUT_DIR:$CONTAINER_HOME/outputs --bind $TEMP_DIR:$CO
 # Bind the host client binaries into the container (see lib_ssh_binds.sh,
 # shared with debug.sh so manual testing matches this exactly), and drop an
 # scp wrapper in the temp bind that disables interactive prompts: scp's
-# output is captured to a log file by the data collector, so a host-key or
-# password prompt would hang the job instead of failing fast.
+# output is captured to a log file by the data collector, so a stuck auth
+# step or a network hang would otherwise hang the job instead of failing fast.
+#
+# Auth mechanism confirmed via manual debug session (see README.md): TACC's
+# login<->compute SSH uses the invoking user's own key under ~/.ssh plus a
+# keyboard-interactive step TACC auto-satisfies with no prompt - not
+# host-based auth, so no /etc/ssh bind is needed, just the user's real ~/.ssh
+# (ssh_home_binds) and pointing the wrapper's $HOME at it.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib_ssh_binds.sh"
 SSH_BINDS=$(ssh_binds "$IMAGE")
 if [ -n "$SSH_BINDS" ]; then
     mkdir -p "$TEMP_DIR/bin"
-    HOST_BINDS="$HOST_BINDS $SSH_BINDS"
+    HOST_BINDS="$HOST_BINDS $SSH_BINDS $(ssh_home_binds)"
     HOST_SCP=$(command -v scp)
     cat > "$TEMP_DIR/bin/scp" <<WRAPPER
 #!/bin/bash
-# -F /dev/null: skip the system ssh config entirely - the bind of the host's
-# /etc/ssh trips ssh's "Bad owner or permissions" check on included files
-# (uid/mode as seen inside the container), and TACC's internal ssh works
-# without that config.
-# UserKnownHostsFile: the default location resolves under \$HOME, which here
-# is the container's baked-in, read-only home - point StrictHostKeyChecking's
-# new-key bookkeeping at the writable temp bind instead.
+# \$HOME is pinned to the real value here (baked in at generation time, on
+# the host, where it already resolves correctly) so ssh's default
+# identity/known_hosts lookup finds the real ~/.ssh bound in above, instead
+# of the container image's own baked-in \$HOME (/home/cs_data_user) - see
+# ssh_home_binds() in lib_ssh_binds.sh.
+# -F /dev/null: no ssh_config ships in this container anyway; explicit here
+# for determinism now that \$HOME no longer points at the image's own home.
+# StrictHostKeyChecking=yes: the real known_hosts (bound in above) already
+# has a trusted entry for login2, so there's nothing to bootstrap - fail
+# closed instead of trust-on-first-use if that ever isn't true.
 # ConnectTimeout: BatchMode=yes fails fast on an auth prompt, but not on a
 # network-level hang (e.g. a remote mount issue); bound that too so a stuck
 # transfer fails within the job's time budget.
-exec $HOST_SCP -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=accept-new \\
-    -o UserKnownHostsFile=$CONTAINER_HOME/tmp/known_hosts -o ConnectTimeout=15 "\$@"
+export HOME=$HOME
+exec $HOST_SCP -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "\$@"
 WRAPPER
     chmod +x "$TEMP_DIR/bin/scp"
 fi
